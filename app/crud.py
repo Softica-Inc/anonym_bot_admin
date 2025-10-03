@@ -1,6 +1,8 @@
 # app/crud.py
+from http.client import HTTPException
+
 from sqlalchemy.orm import Session
-from . import models
+import models
 import json
 from datetime import datetime
 
@@ -30,19 +32,35 @@ def get_participants(db: Session, room_id: int):
 def get_participant(db: Session, participant_id: int):
     return db.query(models.Participant).filter(models.Participant.id == participant_id).first()
 
-def get_participant_by_tg_id(db: Session, tg_user_id: int, room_id: int):
-    return db.query(models.Participant).filter(
+def get_participant_by_tg_id(db, tg_user_id, room_id=None):
+    q = db.query(models.Participant).filter(models.Participant.tg_user_id == tg_user_id)
+    if room_id is not None:
+        q = q.filter(models.Participant.room_id == room_id)
+    return q.first()
+
+
+def create_participant(
+    db: Session,
+    room_id: int,
+    tg_user_id: int,
+    pseudonym: str,
+    tag: str = None
+):
+    existing = db.query(models.Participant).filter(
         models.Participant.tg_user_id == tg_user_id,
-        models.Participant.room_id == room_id,
         models.Participant.left_at.is_(None)
     ).first()
-
-def create_participant(db: Session, room_id: int, tg_user_id: int, pseudonym: str, tag: str = None):
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail="User is already active in another room"
+        )
     participant = models.Participant(
         room_id=room_id,
         tg_user_id=tg_user_id,
         pseudonym=pseudonym,
-        tag=tag
+        tag=tag,
+        joined_at=datetime.utcnow()
     )
     db.add(participant)
     db.commit()
@@ -77,14 +95,35 @@ def delete_message(db: Session, message_id: int):
         message.deleted = True
         db.commit()
 
-def create_message_copy(db: Session, message_id: int, recipient_participant_id: int, recipient_tg_message_id: int):
+def create_message_copy(
+    db: Session,
+    message_id: int,
+    recipient_participant_id: int,
+    recipient_tg_message_id: int,
+    senders_tg_message_id: int = None
+):
+    existing = db.query(models.MessageCopy).filter_by(
+        message_id=message_id,
+        recipient_participant_id=recipient_participant_id
+    ).first()
+    if existing:
+        existing.recipient_tg_message_id = recipient_tg_message_id
+        existing.senders_tg_message_id = senders_tg_message_id
+        db.commit()
+        return existing
+
     copy = models.MessageCopy(
         message_id=message_id,
         recipient_participant_id=recipient_participant_id,
-        recipient_tg_message_id=recipient_tg_message_id
+        recipient_tg_message_id=recipient_tg_message_id,
+        senders_tg_message_id=senders_tg_message_id
     )
     db.add(copy)
     db.commit()
+    db.refresh(copy)
+    return copy
+
+
 
 def get_message_copies(db: Session, message_id: int):
     return db.query(models.MessageCopy).filter(models.MessageCopy.message_id == message_id).all()
@@ -98,3 +137,30 @@ def create_audit_log(db: Session, bot_id: int = None, actor_tg_id: int = None, a
     )
     db.add(log)
     db.commit()
+
+
+
+def create_group(db: Session, room_id: int, tg_group_id: int, title: str):
+    group = models.Group(
+        room_id=room_id,
+        tg_group_id=tg_group_id,
+        title=title,
+        group_aliases={}  # початково порожній словник
+    )
+    db.add(group)
+    db.commit()
+    db.refresh(group)
+    return group
+
+
+def set_group_alias(db: Session, group_id: int, user_id: int, alias: str):
+    group = db.query(models.Group).get(group_id)
+    if not group:
+        return None
+
+    aliases = group.group_aliases or {}
+    aliases[str(user_id)] = alias
+    group.group_aliases = aliases
+    db.commit()
+    db.refresh(group)
+    return group

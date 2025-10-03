@@ -1,7 +1,7 @@
 # models.py
 from sqlalchemy import Column, BigInteger, String, Text, JSON, DateTime, Boolean, ForeignKey
 from sqlalchemy.sql import func
-from database import Base
+from utils import Base
 from sqlalchemy import DateTime
 
 
@@ -49,10 +49,8 @@ class Participant(Base):
     tg_user_id = Column(BigInteger, nullable=False)
     pseudonym = Column(String(255), nullable=False)
     tag = Column(String(255), nullable=True)
-    group_id = Column(BigInteger, ForeignKey("group.id"), nullable=True)  # 👈 нове поле
     joined_at = Column(DateTime, server_default=func.now())
     left_at = Column(DateTime, nullable=True)
-
 
 class Message(Base):
     __tablename__ = "message"
@@ -84,13 +82,3 @@ class AuditLog(Base):
     action = Column(Text, nullable=True)
     payload = Column(JSON, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
-
-class Group(Base):
-    __tablename__ = "group"
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    room_id = Column(BigInteger, ForeignKey("chat_room.id"), nullable=False)
-    tg_group_id = Column(BigInteger, unique=True, nullable=False)  # chat_id самої групи
-    title = Column(String(255), nullable=True)
-    group_aliases = Column(JSON, default={})   # 👈 додати сюди
-    created_at = Column(DateTime, server_default=func.now())
-

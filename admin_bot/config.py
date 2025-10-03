@@ -8,7 +8,9 @@ class Settings(BaseSettings):
     BACKEND_URL: AnyHttpUrl
     WEBHOOK_BASE_URL: Optional[str] = None
     ALLOWLIST_ADMIN_IDS: str = ''
-    ADMIN_PASSWORD: str  # Додано для аутентифікації
+    ADMIN_PASSWORD: str
+    FERNET_KEY: str
+
 
     class Config:
         env_file = '.env'
