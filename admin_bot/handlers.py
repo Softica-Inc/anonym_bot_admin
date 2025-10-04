@@ -33,7 +33,10 @@ from io import BytesIO
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.exceptions import TelegramBadRequest
+from utils import load_whitelist, save_whitelist
 
+
+CURRENT_WHITELIST = set(load_whitelist())
 
 router = Router()
 
@@ -54,7 +57,7 @@ MEDIA_ROOT = os.getenv(
 # -----------------------
 class AuthStates(StatesGroup):
     waiting_password = State()
-    waiting_email = State()
+    waiting_new_password = State()
 
 class NewBotStates(StatesGroup):
     waiting_token = State()
@@ -89,40 +92,91 @@ class LinkGroupStates(StatesGroup):
     waiting_room = State()
     waiting_group_id = State()
 
-# -----------------------
-# Main Menu
-# -----------------------
 
 
+
+# -----------------------
+# Auth
+# -----------------------
 async def cmd_auth(message: Message, state: FSMContext):
     await state.set_state(AuthStates.waiting_password)
-    await message.answer("Введіть пароль для аутентифікації.")
+    await safe_edit_message(message, "🔑 Enter admin password:")
+
 
 async def handle_password(message: Message, state: FSMContext):
     password = message.text.strip()
+
     if password != settings.ADMIN_PASSWORD:
-        await message.answer("Невірний пароль.")
+        await safe_edit_message(message, "❌ Invalid password.")
         return
 
-    db = SessionLocal()
-    try:
-        admin = db.query(models.AdminUser).filter_by(tg_user_id=message.from_user.id).first()
-        if not admin:
-            admin = models.AdminUser(tg_user_id=message.from_user.id)
-            db.add(admin)
-            db.commit()
-    finally:
-        db.close()
+    uid = message.from_user.id
 
-    await message.answer("Аутентифікація успішна!")
+    if uid not in CURRENT_WHITELIST:
+        print(f"[DEBUG] Adding {uid} to whitelist and saving file…")
+        CURRENT_WHITELIST.add(uid)
+        save_whitelist(list(CURRENT_WHITELIST))
+    else:
+        print(f"[DEBUG] User {uid} already in whitelist, not saving.")
+
+    await safe_edit_message(
+        message,
+        "✅ Authentication successful!\nYou have been added to admin whitelist."
+    )
+    await state.clear()
+
+async def handle_change_password(message: Message, state: FSMContext):
+    new_pass = message.text.strip()
+    if not new_pass or len(new_pass) < 4:
+        await safe_edit_message(message, "⚠️ Password too short. Try again.")
+        return
+
+    env_path = ".env"
+    lines = []
+    found = False
+
+    # Replace ADMIN_PASSWORD line in .env
+    if os.path.exists(env_path):
+        with open(env_path, "r") as f:
+            for line in f:
+                if line.startswith("ADMIN_PASSWORD="):
+                    lines.append(f"ADMIN_PASSWORD={new_pass}\n")
+                    found = True
+                else:
+                    lines.append(line)
+    if not found:
+        lines.append(f"ADMIN_PASSWORD={new_pass}\n")
+
+    with open(env_path, "w") as f:
+        f.writelines(lines)
+
+    await safe_edit_message(message, "✅ Admin password has been changed.\nRestart the bot to apply.")
     await state.clear()
 
 
 # -----------------------
 # Start Command
 # -----------------------
+
 async def cmd_start(message: Message, state: FSMContext):
-    await message.answer("Welcome! Choose an action:", reply_markup=main_menu())
+    if message.from_user.id not in CURRENT_WHITELIST:
+        await safe_edit_message(
+            message,
+            "🔑 Please authenticate to continue:",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="🔑 Authenticate", callback_data="auth")]
+                ]
+            )
+        )
+        return
+
+    await safe_edit_message(
+        message,
+        "🏠 Main menu:",
+        reply_markup=main_menu()
+    )
+
 
 # -----------------------
 # Bot Management
@@ -255,7 +309,6 @@ async def handle_start_bot(callback: CallbackQuery):
         )
 
     await callback.answer()
-
 
 
 # -----------------------
@@ -1010,7 +1063,7 @@ async def handle_delete_one_menu(callback: CallbackQuery, state: FSMContext):
                 callback_data=f"delete_room_{r.id}_page_0"
             )
         ])
-    kb.inline_keyboard.append([InlineKeyboardButton(text="⬅️ Back", callback_data="delete")])
+    kb.inline_keyboard.append([InlineKeyboardButton(text="⬅️ Back", callback_data="back_main")])
 
     await safe_edit_message(callback.message, "Select a room:", reply_markup=kb)
 
@@ -1595,6 +1648,10 @@ async def handle_linkgroup_groupid(message: Message, state: FSMContext):
     )
     await state.clear()
 
+
+
+
+
 # -----------------------
 # Router
 # -----------------------
@@ -1602,10 +1659,16 @@ async def handle_linkgroup_groupid(message: Message, state: FSMContext):
 async def inline_router(callback: CallbackQuery, state: FSMContext):
     data = callback.data
     logger.info(f"Callback data: {data}")
-
     # Auth & bot mgmt
     if data == "auth":
         await cmd_auth(callback.message, state)
+    elif data == "change_pass":
+        if callback.from_user.id not in settings.ALLOWLIST_ADMIN_IDS:
+            await safe_edit_message(callback.message, "🚫 You are not allowed to change the password.")
+            return
+        await state.set_state(AuthStates.waiting_new_password)
+        await safe_edit_message(callback.message, "📝 Enter new admin password:")
+
     elif data == "new_bot":
         await cmd_new_bot(callback.message, state)
     elif data == "start_bot":
@@ -1632,7 +1695,6 @@ async def inline_router(callback: CallbackQuery, state: FSMContext):
     elif data.startswith("invite_user_"):
         await handle_invite_user(callback, state)
 
-
     # Team invite
     elif data == "invite_team":
         await start_invite_team(callback.message, state)
@@ -1656,8 +1718,11 @@ async def inline_router(callback: CallbackQuery, state: FSMContext):
     elif data.startswith("members_remove_"):
         await render_members_menu(callback.message)
 
-
-
+    # Аdmin Push
+    elif data == "admin_push":
+        await handle_admin_push(callback, state)
+    elif data.startswith("push_room_"):
+        await handle_push_room(callback, state)
 
     # Kick
     elif data == "kick":
@@ -1723,4 +1788,3 @@ async def inline_router(callback: CallbackQuery, state: FSMContext):
     elif data.startswith("linkgroup_room_"):
         await handle_linkgroup_room(callback, state)
 
-    await callback.answer()

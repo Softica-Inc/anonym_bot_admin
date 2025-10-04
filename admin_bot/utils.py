@@ -10,8 +10,34 @@ from sqlalchemy.orm import sessionmaker
 from aiolimiter import AsyncLimiter
 
 import models
+import os
+import json
+from cryptography.fernet import Fernet
+
+from config import settings
 
 rate_limit = AsyncLimiter(30, 1)
+
+fernet = Fernet(settings.FERNET_KEY.encode())
+WL_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "whitelist.json.enc")
+
+def load_whitelist() -> list[int]:
+    if not os.path.exists(WL_PATH):
+        return []
+    with open(WL_PATH, "rb") as f:
+        encrypted = f.read()
+    try:
+        data = json.loads(fernet.decrypt(encrypted).decode())
+        return data.get("admins", [])
+    except Exception:
+        return []
+
+def save_whitelist(admin_ids: list[int]):
+
+    data = json.dumps({"admins": admin_ids})
+    encrypted = fernet.encrypt(data.encode())
+    with open(WL_PATH, "wb") as f:
+        f.write(encrypted)
 
 async def validate_telegram_token(token: str) -> Optional[dict]:
     async with rate_limit:

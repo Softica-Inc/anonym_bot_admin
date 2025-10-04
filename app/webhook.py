@@ -412,9 +412,16 @@ async def handle_reaction(update: types.MessageReactionUpdated):
 
     # === GROUP REACTION ===
     if update.chat and update.chat.type in ("group", "supergroup"):
+        group = db.query(models.Group).filter_by(tg_group_id=update.chat.id).first()
+        if not group:
+            print(f"⚠️ Reaction in unknown group {update.chat.id}")
+            return
+
         copy = db.query(models.MessageCopy).filter_by(
-            recipient_tg_message_id=update.message_id
+            recipient_tg_message_id=update.message_id,
+            recipient_participant_id=group.id  # 👈 важливо
         ).first()
+
         if not copy:
             print(f"⚠️ Group reaction: no copy found for tg_message_id={update.message_id}")
             return
@@ -519,7 +526,7 @@ async def handle_reaction(update: types.MessageReactionUpdated):
             "original_msg_id": original_msg.id,
             "reply_to_copy": True,
             "sender_id": participant.id,
-            "senders_tg_message_id": copy_any.senders_tg_message_id  # 👈
+            "senders_tg_message_id": copy_any.senders_tg_message_id
         })
     )
 
@@ -926,6 +933,26 @@ async def listen_fanout():
                     except Exception as e:
                         print(f"⚠️ Failed to send text to group {g.tg_group_id}: {e}")
                     continue  # 👈 щоб не падало далі у медіа-логіку
+
+
+
+                if data.get("reaction"):
+                    # знайти локальний id повідомлення у групі
+                    copy = db.query(models.MessageCopy).filter_by(
+                        message_id=data.get("original_msg_id"),
+                        recipient_participant_id=g.id
+                    ).first()
+
+                    if copy and copy.recipient_tg_message_id:
+                        await bot.send_message(
+                            g.tg_group_id,
+                            data.get("text") or "",
+                            reply_to_message_id=copy.recipient_tg_message_id  # 👈
+                        )
+                    else:
+                        await bot.send_message(g.tg_group_id, data.get("text") or "")
+                    continue
+
 
                 if data.get("content_type") in {"photo", "document", "voice", "audio", "video", "sticker",
                                                 "animation"} and data.get("media_key"):

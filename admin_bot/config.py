@@ -1,7 +1,7 @@
 # config.py
 from pydantic_settings import BaseSettings
 from pydantic import AnyHttpUrl
-from typing import Optional
+from typing import Optional, List
 
 class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str
@@ -11,11 +11,15 @@ class Settings(BaseSettings):
     ADMIN_PASSWORD: str
     FERNET_KEY: str
 
+    @property
+    def ADMIN_WHITELIST(self) -> list[int]:
+        return [int(x.strip()) for x in self.ALLOWLIST_ADMIN_IDS.split(',') if x.strip()]
 
     class Config:
         env_file = '.env'
 
 settings = Settings()
+
 print(f"TELEGRAM_BOT_TOKEN: {settings.TELEGRAM_BOT_TOKEN}")
 print(f"BACKEND_URL: {settings.BACKEND_URL}")
 print(f"WEBHOOK_BASE_URL: {settings.WEBHOOK_BASE_URL}")

@@ -16,7 +16,7 @@ from handlers import (
     MemberStates, handle_invite_team_generate, on_invite_team_count, TeamInviteStates, on_invite_team_input,
     on_extend_input, handle_choose_bot, handle_admin_push, handle_push_room, handle_push_text, AdminPushStates,
     handle_linkgroup_groupid, LinkGroupStates, handle_edit_member, handle_add_member, handle_remove_member,
-    handle_member_action
+    handle_member_action, handle_change_password
 )
 
 
@@ -25,6 +25,7 @@ async def main():
     dp = Dispatcher(storage=MemoryStorage())
 
     # Register handlers
+    dp.message.register(handle_change_password, AuthStates.waiting_new_password)
     dp.message.register(cmd_start, Command(commands=['start']))
     dp.message.register(cmd_new_bot, Command(commands=['new_bot']))
     dp.message.register(cmd_cancel, Command(commands=['cancel']))
